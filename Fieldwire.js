@@ -55,9 +55,9 @@ const SmartsheetData = async () => {
             return rowData;
         });
 
-        // const jsonData = JSON.stringify(rowsData, null, 2);
+        const jsonData = JSON.stringify(rowsData, null, 2);
 
-        // fs.writeFileSync('rowsData.json', jsonData);
+        fs.writeFileSync('rowsData.json', jsonData);
 
         
         await collection.insertMany(rowsData);
