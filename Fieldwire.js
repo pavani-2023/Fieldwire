@@ -5,83 +5,10 @@ const accessToken = process.env.SMARTSHEET_ACCESS_KEY;
 const smartsheet = SmartsheetClient.createClient({ accessToken });
 const sheetId = process.env.SMARTSHEET_SHEETID;
 const MOGODB_URI=process.env.MOGODB_URI;
+const deepEqual = require('deep-equal');
+
 // const { MongoClient } = require('mongodb')
 
-
-
-
-const SmartsheetData = async () => {
-    try {
-     
-        await mongoose.connect(MOGODB_URI);
-
-        
-        const collection = mongoose.connection.collection('FieldWire');
-
-       
-        const result = await smartsheet.sheets.getSheet({ id: sheetId });
-        // console.log('result',result)
-
-        
-        const rowsData = result.rows.map(row => {
-            const rowData = {};
-
-            for (const prop in row) {
-                // Exclude the 'cells' property
-                if (prop !== 'cells') {
-                    rowData[prop] = row[prop];
-                }
-            }
-            // row.cells.forEach(cell => {
-            //     const column = result.columns.find(column => column.id === cell.columnId);
-            //     if (column) {
-            //         rowData[column.title] = cell.value;
-            //     } else {
-            //         // If column is not found, set the entire column data to null
-            //         result.columns.forEach(column => {
-            //             rowData[column.title] = null;
-            //         });
-            //         // Alternatively, you can set the value to null for the specific cell.columnId
-            //         // rowData[cell.columnId] = null;
-            //     }
-            // });
-
-            result.columns.forEach(column => {
-                const cell = row.cells.find(cell => cell.columnId === column.id);
-                rowData[column.title] = cell ? cell.value : null;
-            });
-        
-
-            return rowData;
-        });
-
-        const jsonData = JSON.stringify(rowsData, null, 2);
-
-        fs.writeFileSync('rowsData.json', jsonData);
-
-        
-        await collection.insertMany(rowsData);
-
-        console.log('Rows data has been saved to MongoDB');
-
-        const mongodbData = await collection.find({}).toArray();
-
-        
-        const mismatchedData = findMismatchedData(rowsData, mongodbData, 'id');
-
-        if (mismatchedData.length === 0) {
-            console.log('Smartsheet and MongoDB data match!');
-        } else {
-            console.log('Smartsheet and MongoDB data do not match. Mismatched items:', mismatchedData);
-        }
-    } catch (error) {
-        console.error(error);
-        console.log('Something went wrong');
-    } finally {
-        
-        await mongoose.connection.close();
-    }
-};
 
 
 const findMismatchedData = (smartsheetData, mongodbData, id) => {
@@ -89,7 +16,7 @@ const findMismatchedData = (smartsheetData, mongodbData, id) => {
     const mongodbMap = new Map(mongodbData.map(item => [item[id], item]));
 
     const mismatchedData = [];
-
+ 
     // Find mismatched items based on the identifier
     for (const [id, smartsheetItem] of smartsheetMap) {
         const mongodbItem = mongodbMap.get(id);
@@ -99,7 +26,7 @@ const findMismatchedData = (smartsheetData, mongodbData, id) => {
         }
     }
     
-
+    
     // Find items in MongoDB that are not present in Smartsheet
     for (const [id, smartsheetItem] of smartsheetMap) {
         const mongodbItem = mongodbMap.get(id);
@@ -108,9 +35,13 @@ const findMismatchedData = (smartsheetData, mongodbData, id) => {
             mismatchedData.push({ smartsheet: smartsheetItem, mongodb: mongodbItem });
         }
     }
+    
+    const jsonsData = JSON.stringify( mismatchedData , null, 2);
+
+    fs.writeFileSync('mismatchedData.json', jsonsData);
+
     return mismatchedData;
 };
-
 
 function deepCompare(obj1, obj2) {
     // Check if both values are null or undefined
@@ -164,6 +95,105 @@ function deepCompare(obj1, obj2) {
     // Otherwise, compare values
     return obj1 === obj2;
 }
+
+
+const SmartsheetData = async () => {
+    try {
+        await mongoose.connect(MOGODB_URI);
+
+
+        const collection = mongoose.connection.collection('FieldWire');
+
+        // Check if there is any data in the MongoDB collection
+        const hasDataInDB = await collection.countDocuments() > 0;
+
+        if (hasDataInDB) {
+            console.log('Data already exists in MongoDB. Checking for mismatches...');
+
+            // Retrieve data from MongoDB
+            const mongodbData = await collection.find({}).toArray();
+
+            // Retrieve data from Smartsheet API
+            const result = await smartsheet.sheets.getSheet({ id: sheetId });
+            // console.log(result);
+
+            const rowsData = result.rows.map(row => {
+                const rowData = {};
+    
+                for (const prop in row) {
+                    // Exclude the 'cells' property
+                    if (prop !== 'cells') {
+                        rowData[prop] = row[prop];
+                    }
+                }
+                
+                result.columns.forEach(column => {
+                    const cell = row.cells.find(cell => cell.columnId === column.id);
+                    rowData[column.title] = cell?.value ? cell.value : null;
+                });
+            
+                return rowData;
+            });
+
+            const jsonData = JSON.stringify(rowsData, null, 2);
+            fs.writeFileSync('rowsData.json', jsonData);
+            console.log('data saved to rows.jsonfile')
+
+            // Find mismatched items
+            const mismatchedData = findMismatchedData(rowsData, mongodbData, 'id');
+
+            if (mismatchedData.length === 0) {
+                console.log('Smartsheet and MongoDB data match!');
+            } else {
+                console.log('Smartsheet and MongoDB data do not match.');
+            }
+
+            console.log('Mismatches found. Updating data in MongoDB...');
+
+            // Update mismatched data in MongoDB
+            for (const mismatchedItem of mismatchedData) {
+                const smartsheetItem = mismatchedItem.smartsheet;
+                const filter = { id: smartsheetItem.id };
+
+                // Update the mismatched data in MongoDB
+                await collection.updateMany(filter, { $set: smartsheetItem });       
+            }
+            console.log(`Mismatched data updated in MongoDB.`);
+        } else {
+            // No data in MongoDB, proceed with the API call and data insertion logic
+            const result = await smartsheet.sheets.getSheet({ id: sheetId });
+
+            const rowsData = result.rows.map(row => {
+                const rowData = {};
+    
+                for (const prop in row) {
+                    // Exclude the 'cells' property
+                    if (prop !== 'cells') {
+                        rowData[prop] = row[prop];
+                    }
+                }
+                
+                result.columns.forEach(column => {
+                    const cell = row.cells.find(cell => cell.columnId === column.id);
+                    rowData[column.title] = cell?.value ? cell.value : null;
+                });
+            
+    
+                return rowData;
+            });
+
+            const jsonData = JSON.stringify(rowsData, null, 2);
+            fs.writeFileSync('rowsData.json', jsonData);
+            console.log('Rows data has been saved to MongoDB');
+        }
+    } catch (error) {
+        console.error(error);
+        console.log('Something went wrong');
+    } finally {
+        await mongoose.connection.close();
+    }
+};
+
 
 
 
