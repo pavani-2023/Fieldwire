@@ -1,13 +1,17 @@
 const fs = require('fs');
 const SmartsheetClient = require('smartsheet');
-const mongoose = require('mongoose'); // Add this line to import mongoose
+const mongoose = require('mongoose'); 
+const fieldWireBaseUrl = process.env.FIELDWIRE_URL
+const fieldWireToken = process.env.FIELDWIRE_TOKEN
+
 const accessToken = process.env.SMARTSHEET_ACCESS_KEY;
 const smartsheet = SmartsheetClient.createClient({ accessToken });
 const sheetId = process.env.SMARTSHEET_SHEETID;
 const MOGODB_URI=process.env.MOGODB_URI;
+const axios = require('axios');
 
 
-// const { MongoClient } = require('mongodb')
+
 
 
 
@@ -22,8 +26,11 @@ const findMismatchedData = (smartsheetData, mongodbData, id) => {
     for (const [id, smartsheetItem] of smartsheetMap) {
         const mongodbItem = mongodbMap.get(id);
     
-        if (!mongodbItem || !deepCompare(smartsheetItem, mongodbItem)) {
-            mismatchedData.push({ smartsheet: smartsheetItem, mongodb: mongodbItem });
+        if (mongodbItem && !deepCompare(smartsheetItem.cellData, mongodbItem.cellData)) {
+            mismatchedData.push({
+                smartsheet: smartsheetItem.cellData,
+                mongodb: mongodbItem.cellData
+            });
         }
     }
     
@@ -103,10 +110,12 @@ function deepCompare(obj1, obj2, path = '') {
     return true;
 }
 
-const clearMismatchedDataFile = () => {
-    fs.unlinkSync('mismatchedData.json');
-    console.log('Mismatched data file cleared.');
-};
+// const clearMismatchedDataFile = () => {
+//     fs.unlinkSync('mismatchedData.json');
+//     console.log('Mismatched data file cleared.');
+// };
+
+
 
 const SmartsheetData = async () => {
     try {
@@ -119,35 +128,33 @@ const SmartsheetData = async () => {
         const hasDataInDB = await collection.countDocuments() > 0;
 
         if (hasDataInDB) {
-            clearMismatchedDataFile();
+            // clearMismatchedDataFile();
             console.log('Data already exists in MongoDB. Checking for mismatches...');
 
             // Retrieve data from MongoDB
-            
- 
             const mongodbData = await collection.find({}).toArray();
 
             // Retrieve data from Smartsheet API
             const result = await smartsheet.sheets.getSheet({ id: sheetId });
             // console.log(result);
 
-            const rowsData = result.rows.map(row => {
-                const rowData = {};
-    
-                for (const prop in row) {
-                    // Exclude the 'cells' property
-                    if (prop !== 'cells') {
-                        rowData[prop] = row[prop];
-                    }
-                }
+        
                 
+    
+            const rowsData = result.rows.map(row => {
+                const cellData = {};
+
                 result.columns.forEach(column => {
                     const cell = row.cells.find(cell => cell.columnId === column.id);
-                    rowData[column.title] = cell?.value ? cell.value : null;
+                    cellData[column.title] = cell?.value ? cell.value : null;
                 });
-            
-                return rowData;
+
+                return cellData;
             });
+                           
+    
+                
+            
 
             const jsonData = JSON.stringify(rowsData, null, 2);
             fs.writeFileSync('rowsData.json', jsonData);
@@ -161,6 +168,7 @@ const SmartsheetData = async () => {
                 console.log('Smartsheet and MongoDB data match!');
             } else {
                 console.log('Smartsheet and MongoDB data do not match.');
+                
             }
 
            
@@ -190,37 +198,41 @@ const SmartsheetData = async () => {
             // console.log('mismatched data is updated')
             // clearMismatchedDataFile ();
 
-            for (const mismatchedItem of mismatchedData) {
-                const smartsheetItem = mismatchedItem.smartsheet;
-                const mongodbItem = mismatchedItem.mongodb;
-                const filter = { id: smartsheetItem.id };
+            // for (const mismatchedItem of mismatchedData) {
+            //     const smartsheetItem = mismatchedItem.smartsheet;
+            //     const mongodbItem = mismatchedItem.mongodb;
+            //     const filter = { id: smartsheetItem.id };
             
-                // Compare objects property by property without considering the "_id" field
-                const changedProperties = Object.keys(smartsheetItem).filter(key => {
-                    return smartsheetItem[key] !== mongodbItem[key];
-                });
+            //     // Compare objects property by property without considering the "_id" field
+            //     const changedProperties = Object.keys(smartsheetItem).filter(key => {
+            //         return smartsheetItem[key] !== mongodbItem[key];
+            //     });
             
-                if (changedProperties.length > 0) {
-                    // Data has changed, update it
-                    await collection.updateOne(filter, { $set: smartsheetItem });
+            //     if (changedProperties.length > 0) {
+            //         // Data has changed, update it
+            //         await collection.updateOne(filter, { $set: smartsheetItem });
                     
-                    // Log only the key-value pairs of changed properties
-                    changedProperties.forEach(key => {
-                        console.log(`  ${key}: ${smartsheetItem[key]}`);
-                    });
-                } 
-            }
+            //         // Log only the key-value pairs of changed properties
+            //         changedProperties.forEach(key => {
+            //             console.log(`  ${key}: ${smartsheetItem[key]}`);
+            //         });
+            //     } 
+
+               
+            // }
+
+            // await updateFieldWireApi(mismatchedData);
             
             console.log('Mismatched data updates completed');
             // clearMismatchedDataFile();
 
 
 
-            
+
             
 
         } else {
-            // No data in MongoDB, proceed with the API call and data insertion logic
+           
 
             await mongoose.connect(MOGODB_URI);
 
@@ -230,27 +242,39 @@ const SmartsheetData = async () => {
              
             const result = await smartsheet.sheets.getSheet({ id: sheetId });
 
-            const rowsData = result.rows.map(row => {
-                const rowData = {};
+            // const rowsData = result.rows.map(row => {
+            //     const rowData = {};
     
-                for (const prop in row) {
-                    // Exclude the 'cells' property
-                    if (prop !== 'cells') {
-                        rowData[prop] = row[prop];
-                    }
-                }
+            //     for (const prop in row) {
+                    
+            //         if (prop !== 'cells') {
+            //             rowData[prop] = row[prop];
+            //         }
+            //     }
 
                 
-                result.columns.forEach(column => {
-                    const cell = row.cells.find(cell => cell.columnId === column.id);
-                    rowData[column.title] = cell?.value ? cell.value : null;
-                });
+            //     result.columns.forEach(column => {
+            //         const cell = row.cells.find(cell => cell.columnId === column.id);
+            //         rowData[column.title] = cell?.value ? cell.value : null;
+            //     });
                
                 
     
-                return rowData;
-            });
+            //     return rowData;
+            // });
 
+            const rowsData = result.rows.map(row => {
+                const cellData = {};
+
+                result.columns.forEach(column => {
+                    const cell = row.cells.find(cell => cell.columnId === column.id);
+                    cellData[column.title] = cell?.value ? cell.value : null;
+                });
+
+                return cellData;
+            });
+                 
+             
 
             await collection.insertMany(rowsData);
 
@@ -268,6 +292,325 @@ const SmartsheetData = async () => {
 };
 
 
+const updateFieldWireApi = async (mismatchedData) => {
+    try {
+      const fieldWireApiUrl = fieldWireBaseUrl; 
+      console.log("fieldWireApiUrl",fieldWireApiUrl);
+      const targetProjectId = '2f3e3293-5bc5-42e2-90c3-31168134e5e7';
+      
+      for (const mismatchedItem of mismatchedData) {
+        if (mismatchedItem && mismatchedItem.smartsheet) {
+          const projectId = mismatchedItem.smartsheet['Project ID'];
+          const taskId = mismatchedItem.smartsheet['Task ID'];
+          const floorplanId = mismatchedItem.smartsheet['Floorplan ID']
+          const name=mismatchedItem.smartsheet['Category']
+          
+  
+          if (projectId === targetProjectId) {
+            
+            if ('Task Name' in mismatchedItem.smartsheet) {
+
+              const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+              console.log(url);
+              const data = {
+                name: mismatchedItem.smartsheet['Task Name'],
+              };
+  
+              const headers = {
+                'Authorization': `Token api=${fieldWireToken}`,
+                'Content-Type': 'application/json',
+              };
+
+              // console.log("fieldwireToken",fieldWireToken);
+              //console.log('Updating task with the following data:', data);
+  
+              const response = await axios.patch(url, data, { headers });
+
+              console.log(response?.data);
+  
+           
+            } 
+
+
+            // if ('Project Status' in mismatchedItem.smartsheet) {
+
+            
+            //     const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+
+            //     // console.log(url);
+
+            //     const data = {
+            //         archived_at: mismatchedItem.smartsheet['Project Status']
+            //     };
+    
+            //     const headers = {
+            //       'Authorization': `Token api=${fieldWireToken}`,
+            //       'Content-Type': 'application/json',
+            //     };
+                
+            //     // console.log("fieldwireToken",fieldWireToken);
+            //     // console.log('Updating task with the following data:', data);
+    
+            //     const response = await axios.patch(url, data, { headers });
+
+            //     console.log(response?.data);
+    
+               
+            // } 
+
+            if ('Project Name' in mismatchedItem.smartsheet) {
+
+                const url = `${fieldWireApiUrl}/projects/${projectId}`;
+                // console.log(url);
+
+                const data = {
+                    name: mismatchedItem.smartsheet['Project Name']
+                };
+    
+                const headers = {
+                  'Authorization': `Token api=${fieldWireToken}`,
+                  'Content-Type': 'application/json',
+                };
+
+                // console.log("fieldwireToken",fieldWireToken);
+                // console.log('Updating task with the following data:', data);
+    
+                const response = await axios.patch(url, data, { headers });
+                // console.log(response?.data);
+    
+            }
+             
+            if ('Description' in mismatchedItem.smartsheet) {
+
+                const url = `${fieldWireApiUrl}/projects/${projectId}/floorplans/${floorplanId}`;
+                // console.log(url);
+
+                const data = {
+                    description: mismatchedItem.smartsheet['Description']
+                };
+    
+                const headers = {
+                  'Authorization': `Token api=${fieldWireToken}`,
+                  'Content-Type': 'application/json',
+                };
+
+                // console.log("fieldwireToken",fieldWireToken);
+                // console.log('Updating task with the following data:', data);
+    
+                const response = await axios.patch(url, data, { headers });
+                // console.log(response?.data);
+    
+            }
+
+            // if ('Category' in mismatchedItem.smartsheet) {
+
+            //     const url = `${fieldWireApiUrl}/projects/${projectId}/teams/${name}`;
+            //     // console.log(url);
+
+            //     const data = {
+            //         team_id:mismatchedItem.smartsheet['Team ID']
+            //     };
+    
+            //     const headers = {
+            //       'Authorization': `Token api=${fieldWireToken}`,
+            //       'Content-Type': 'application/json',
+            //     };
+
+            //     // console.log("fieldwireToken",fieldWireToken);
+            //     // console.log('Updating task with the following data:', data);
+    
+            //     const response = await axios.patch(url, data, { headers });
+            //      console.log(response?.data);
+    
+            // }
+
+            if ('Category' in mismatchedItem.smartsheet) {
+
+                const urlTeams = `${fieldWireApiUrl}/teams`; 
+                const theaders = {
+                    'Authorization': `Token api=${fieldWireToken}`,
+                    'Content-Type': 'application/json',
+                };
+                const responseTeams = await axios.get(urlTeams, { theaders });
+                const teams = responseTeams.data; 
+
+                const team = teams.find(
+                    team => team.name === name && team.project_Id === projectId
+                );
+
+
+                if(team){
+                    const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+                    // console.log(url);
+    
+                    const data = {
+                        team_id:team.id
+                    };
+        
+                    const headers = {
+                      'Authorization': `Token api=${fieldWireToken}`,
+                      'Content-Type': 'application/json',
+                    };
+
+                    const response = await axios.patch(url, data, { headers });
+                    console.log(response?.data);
+
+                }
+    
+            }
+            
+            if ('Assignee' in mismatchedItem.smartsheet) {
+
+                const url = `${fieldWireApiUrl}/projects/${projectId}/users/${teamid}`;
+                // console.log(url);
+
+                const data = {
+                    name: mismatchedItem.smartsheet['Assignee']
+                };
+    
+                const headers = {
+                  'Authorization': `Token api=${fieldWireToken}`,
+                  'Content-Type': 'application/json',
+                };
+
+                // console.log("fieldwireToken",fieldWireToken);
+                // console.log('Updating task with the following data:', data);
+    
+                const response = await axios.patch(url, data, { headers });
+                // console.log(response?.data);
+    
+            }
+            
+
+            if ('Start Date' in mismatchedItem.smartsheet) {
+
+                const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+                // console.log(url);
+
+                const data = {
+                    start_at: mismatchedItem.smartsheet['Start Date']
+                };
+    
+                const headers = {
+                  'Authorization': `Token api=${fieldWireToken}`,
+                  'Content-Type': 'application/json',
+                };
+
+                // console.log("fieldwireToken",fieldWireToken);
+                // console.log('Updating task with the following data:', data);
+    
+                const response = await axios.patch(url, data, { headers });
+                // console.log(response?.data);
+    
+            }
+
+            if ('End Date' in mismatchedItem.smartsheet) {
+
+                const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+                // console.log(url);
+
+                const data = {
+                    end_at: mismatchedItem.smartsheet['End Date']
+                };
+    
+                const headers = {
+                  'Authorization': `Token api=${fieldWireToken}`,
+                  'Content-Type': 'application/json',
+                };
+
+            
+    
+                const response = await axios.patch(url, data, { headers });
+                // console.log(response?.data);
+    
+            }
+
+
+          }
+
+
+        } else {
+          console.error('Invalid mismatchedItem:', mismatchedItem);
+        }
+      }
+  
+      
+    } catch (error) {
+      console.error('Error updating FieldWire API:', error);
+    }
+};
+
+
+// const updateFieldWireApi = async (mismatchedData) => {
+//   try {
+//     const fieldWireApiUrl = fieldWireBaseUrl; 
+//     console.log("fieldWireBaseUrl",fieldWireBaseUrl);
+//     const targetProjectId = '2f3e3293-5bc5-42e2-90c3-31168134e5e7';
+//      console.log(mismatchedData);
+
+//     for (let i = 0; i < mismatchedData.length; i++)  {
+//         const mismatchedItem = mismatchedData[i].smartsheet;
+//         console.log(mismatchedItem);
+//         const projectId = mismatchedItem && mismatchedItem['Project ID'];
+//         const taskId = mismatchedItem && mismatchedItem['Task ID'];
+
+//         console.log(projectId);
+//         console.log(taskId);
+
+//     //   const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+//     //   const data = {
+//     //     name: mismatchedItem.TaskName,
+//     //     sequence_number: mismatchedItem.Number
+//     //   };
+
+//     //   const headers = {
+//     //     'Authorization': 'fieldWireToken', 
+//     //     'Content-Type': 'application/json',
+        
+//     //   };
+
+    
+//     if ('Task Name' in mismatchedItem.smartsheet || 'Task Number' in mismatchedItem.smartsheet) {
+//         const url = `${fieldWireApiUrl}/projects/${projectId}/tasks/${taskId}`;
+//         const data = {
+//           name: mismatchedItem.smartsheet['Task Name'],
+//           sequence_number: mismatchedItem.smartsheet['Task Number'],
+//           // Add other fields as needed
+//         };
+//         console.log("data",data);
+
+//         const headers = {
+//           'Authorization': `Token api=${fieldWireToken}`, 
+//           'Content-Type': 'application/json',
+          
+//         };
+
+//         console.log("fieldWireToken",fieldWireToken)
+
+//         const response = await axios.patch(url, data, { headers });
+
+//         if (response.status === 200) {
+//           console.log(`Successfully updated FieldWire API for Task ID: ${taskId} in Project ID: ${projectId}`);
+//         } else {
+//           console.error(`Failed to update FieldWire API for Task ID: ${taskId} in Project ID: ${projectId}`);
+//         }
+//     } else {
+
+//         console.log(`No update needed for Task ID: ${taskId} in Project ID: ${projectId}`);      
+//     }
+
+
+// }
+      
+//     console.log('FieldWire API updates completed');
+//   } catch (error) {
+//     console.error('Error updating FieldWire API:', error);
+//   }
+// };
+
+
+  
+  
 
 module.exports = SmartsheetData;
 
